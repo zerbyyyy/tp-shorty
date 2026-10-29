@@ -8,7 +8,7 @@ app.use(express.json());
 
 app.get('/health', async (req, res) => {
   await pool.query('SELECT 1');
-  res.json({ status: 'ok' });
+  res.json({ status: 'dev-ok' });
 });
 
 app.get('/api/links', async (req, res) => {
@@ -33,3 +33,4 @@ app.get('/s/:code', async (req, res) => {
   if (rows.length === 0) return res.status(404).send('Lien introuvable');
   res.redirect(rows[0].url);
 });
+// test cache

@@ -1,0 +1,22 @@
+services:
+  api:
+    command: node --watch src/server.js
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+
+  front:
+    build:
+      context: ./front
+      target: dev
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://localhost:3000
+    volumes:
+      - ./front:/app
+      - /app/node_modules
+
+  db:
+    ports:
+      - "5432:5432"

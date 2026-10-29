@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      DB_PASSWORD: secretpassword
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Démarrer PostgreSQL pour les tests
+        run: docker compose -f compose.yaml up -d --wait db
+
+      - name: Installer Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Lancer les tests de l'API
+        run: |
+          npm ci
+          npm test
+        working-directory: api
+        env:
+          DATABASE_URL: postgres://postgres:secretpassword@localhost:5432/shorty
+
+      - name: Construire les images de production
+        run: docker compose -f compose.yaml build
+
+      - name: Scanner l'image API avec Trivy
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            ${{ vars.DOCKERHUB_USERNAME }}/shorty-api:${{ env.TAG }}
+
+      - name: Scanner l'image Front avec Trivy
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            ${{ vars.DOCKERHUB_USERNAME }}/shorty-front:${{ env.TAG }}
+
+      - name: Connexion à Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Publier les images sur Docker Hub
+        run: docker compose push api front
