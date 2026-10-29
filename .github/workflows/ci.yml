@@ -11,48 +11,42 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     env:
-      POSTGRES_DB: shorty
-      POSTGRES_USER: postgres
       DB_PASSWORD: secretpassword
       POSTGRES_PASSWORD: secretpassword
+      POSTGRES_USER: postgres
+      POSTGRES_DB: shorty
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
       TAG: ${{ github.ref_name }}
     steps:
-      - name: Checkout du code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Démarrer PostgreSQL pour les tests
-        run: docker compose -f compose.yaml run -d --name test-db -p 5432:5432 --service-ports db || docker compose -f compose.yaml up -d --wait db
+      # Démarre la base exactement selon la consigne du sujet
+      - name: Start Database
+        run: docker compose -f compose.yaml up -d --wait db
 
-      - name: Attendre que PostgreSQL soit prêt
-        run: |
-          until docker compose -f compose.yaml exec -T db pg_isready -U postgres -d shorty; do
-            echo "En attente de PostgreSQL..."
-            sleep 2
-          done
-
-      - name: Installer Node.js 22
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
           cache-dependency-path: api/package-lock.json
 
-      - name: Lancer les tests de l'API
+      # Récupère l'IP du conteneur ou passe par localhost si mappé
+      - name: Run Tests
+        working-directory: api
         run: |
           npm ci
-          npm test
-        working-directory: api
-        env:
-          DATABASE_URL: postgres://postgres:secretpassword@localhost:5432/shorty
+          # Récupère dynamiquement l'IP du conteneur db dans le réseau Docker
+          DB_HOST=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $(docker compose -f ../compose.yaml ps -q db))
+          # Si vide (ex: network_mode host), on bascule sur 127.0.0.1
+          DB_HOST=${DB_HOST:-127.0.0.1}
+          DATABASE_URL="postgres://postgres:secretpassword@${DB_HOST}:5432/shorty" npm test
 
-      - name: Nettoyer la base de test
-        run: docker compose -f compose.yaml down -v
-
-      - name: Construire les images de production
+      - name: Build Images
         run: docker compose -f compose.yaml build
 
-      - name: Scanner l'image API avec Trivy
+      - name: Scan API Image with Trivy
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -62,7 +56,7 @@ jobs:
             --exit-code 1 \
             ${{ vars.DOCKERHUB_USERNAME }}/shorty-api:${{ env.TAG }}
 
-      - name: Scanner l'image Front avec Trivy
+      - name: Scan Front Image with Trivy
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -72,8 +66,8 @@ jobs:
             --exit-code 1 \
             ${{ vars.DOCKERHUB_USERNAME }}/shorty-front:${{ env.TAG }}
 
-      - name: Connexion à Docker Hub
+      - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME }}" --password-stdin
 
-      - name: Publier les images sur Docker Hub
+      - name: Push Images
         run: docker compose push api front
